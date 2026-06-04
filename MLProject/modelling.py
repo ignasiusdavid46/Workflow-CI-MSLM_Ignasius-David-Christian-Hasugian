@@ -40,6 +40,10 @@ DAGSHUB_USERNAME = os.getenv("DAGSHUB_USERNAME", "ignasiusdavid46")
 DAGSHUB_REPO     = os.getenv("DAGSHUB_REPO",
                               "Eksperimen_SML_Ignasius-David-Christian-Hasugian")
 
+# DagsHub + MLflow
+dagshub.init(repo_owner=DAGSHUB_USERNAME, repo_name=DAGSHUB_REPO, mlflow=True)
+mlflow.set_experiment(EXPERIMENT)
+
 # Load Data
 train = pd.read_csv(TRAIN_PATH)
 test  = pd.read_csv(TEST_PATH)
@@ -52,16 +56,7 @@ y_test  = test[TARGET]
 FEATURES = X_train.columns.tolist()
 print(f"Train: {X_train.shape} | Test: {X_test.shape}")
 
-# DagsHub + MLflow
-mlflow.set_tracking_uri(
-    f"https://dagshub.com/{DAGSHUB_USERNAME}/{DAGSHUB_REPO}.mlflow"
-)
-os.environ["MLFLOW_TRACKING_USERNAME"] = os.getenv("MLFLOW_TRACKING_USERNAME")
-os.environ["MLFLOW_TRACKING_PASSWORD"] = os.getenv("MLFLOW_TRACKING_PASSWORD")
-mlflow.set_experiment(EXPERIMENT)
-
 # Artefak helpers
-
 def plot_confusion_matrix(y_true, y_pred) -> str:
     cm = confusion_matrix(y_true, y_pred)
     fig, ax = plt.subplots(figsize=(5, 4))
@@ -137,8 +132,11 @@ for k, v in metrics.items():
     print(f"  {k:22s}: {v:.4f}")
 
 # MLflow Manual Logging
-    run = mlflow.active_run()
-    run_id = run.info.run_id if run else "manual-run"
+existing_run_id = os.getenv("MLFLOW_RUN_ID")
+
+with mlflow.start_run(run_id=existing_run_id, run_name="RF-CI-Advanced") as run:
+    run_id = run.info.run_id
+    print(f"\nMLflow Run ID: {run_id}")
 
     # Params
     mlflow.log_params(best_params)

@@ -1,47 +1,46 @@
-name: CI – Train Model & Build Docker Image
+name: CI – Wine Quality MLProject
 
-# ─── Trigger ──────────────────────────────────────────────────────────────────
 on:
   push:
     branches: [ main ]
     paths:
       - 'MLProject/**'
-  workflow_dispatch:   # trigger manual dari tab Actions
+  workflow_dispatch:
 
-# ─── Jobs ─────────────────────────────────────────────────────────────────────
 jobs:
   train-and-deploy:
-    name: Train Model, Upload Artifacts & Push Docker
+    name: Train, Upload & Docker
     runs-on: ubuntu-latest
 
     steps:
       # 1. Checkout
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Run actions/checkout@v3
+        uses: actions/checkout@v3
 
-      # 2. Setup Python
-      - name: Setup Python 3.12
+      # 2. Python
+      - name: Set up Python 3.12.7
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.12.7'
 
-      # 3. Cache pip
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-mlproject-v1
+      # 3. Check environment
+      - name: Check Env
+        run: |
+          python --version
+          pip --version
+          echo "DAGSHUB_USERNAME=${{ secrets.DAGSHUB_USERNAME }}"
+          echo "DAGSHUB_REPO=${{ secrets.DAGSHUB_REPO }}"
 
-      # 4. Install dependencies
-      - name: Install Dependencies
+      # 4. Install dependencies (untuk mlflow run)
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install pandas==2.2.2 numpy==1.26.4 scikit-learn==1.5.1 \
                       mlflow==2.19.0 dagshub==0.3.36 \
                       matplotlib==3.9.1 seaborn==0.13.2
 
-      # 5. Jalankan MLflow Project (training)
-      - name: Run MLflow Project – Training
+      # 5. Run mlflow project
+      - name: Run mlflow project
         env:
           DAGSHUB_USERNAME:          ${{ secrets.DAGSHUB_USERNAME }}
           DAGSHUB_REPO:              ${{ secrets.DAGSHUB_REPO }}
@@ -51,79 +50,77 @@ jobs:
           cd MLProject
           mlflow run . --env-manager=local -e main
 
-      # 6. Upload artefak model ke GitHub (sebagai release artifact / repo file)
-      - name: Upload Model Artifact to GitHub
-        uses: actions/upload-artifact@v4
-        with:
-          name: wine-quality-model-${{ github.run_number }}
-          path: MLProject/model_output/
-          retention-days: 30
+      # 6. Get latest MLflow run_id
+      - name: Get latest MLflow run_id
+        env:
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+          DAGSHUB_USERNAME:         ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_REPO:             ${{ secrets.DAGSHUB_REPO }}
+        run: |
+          python - <<'EOF'
+          import mlflow, dagshub, os
 
-      # 7. Commit model output ke repository (agar reviewer bisa lihat)
-      - name: Commit Model Output to Repo
+          dagshub.init(
+              repo_owner=os.environ["DAGSHUB_USERNAME"],
+              repo_name=os.environ["DAGSHUB_REPO"],
+              mlflow=True
+          )
+          client = mlflow.tracking.MlflowClient()
+          exp = client.get_experiment_by_name("WineQuality-CI")
+          runs = client.search_runs(exp.experiment_id,
+                                    order_by=["start_time DESC"],
+                                    max_results=1)
+          run_id = runs[0].info.run_id
+          print(f"Latest run_id: {run_id}")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"MLFLOW_LATEST_RUN_ID={run_id}\n")
+          EOF
+
+      # 7. Install Python dependencies (untuk upload script)
+      - name: Install Python dependencies
+        run: |
+          pip install requests
+
+      # 8. Upload to GitHub (commit model_output ke repo)
+      - name: Upload to GitHub
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name  "github-actions[bot]"
           mkdir -p model_artifacts
-          cp -r MLProject/model_output/* model_artifacts/ 2>/dev/null || true
+          cp -r MLProject/model_output/. model_artifacts/
+          echo "${{ env.MLFLOW_LATEST_RUN_ID }}" > model_artifacts/run_id.txt
           git add model_artifacts/
           git diff --staged --quiet || \
-            git commit -m "ci: update model artifacts [run #${{ github.run_number }}] [skip ci]"
+            git commit -m "ci: update model artifacts – run ${{ github.run_number }} [skip ci]"
+          git push
 
-      - name: Push Model Artifacts
-        uses: ad-m/github-push-action@v0.8.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: ${{ github.ref_name }}
+      # 9. Build Docker Model
+      - name: Build Docker Model
+        run: |
+          mlflow models build-docker \
+            -m "MLProject/model_output" \
+            -n "wine-quality-rf" \
+            --enable-mlserver
 
-      # 8. Setup Docker Buildx
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 9. Login ke Docker Hub
-      - name: Login to Docker Hub
+      # 10. Log in to Docker Hub
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 10. Build Docker Image via mlflow build-docker
-      - name: Build Docker Image (mlflow build-docker)
+      # 11. Tag Docker Image
+      - name: Tag Docker Image
         run: |
-          IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf"
-          IMAGE_TAG="${IMAGE_NAME}:${{ github.run_number }}"
-          IMAGE_LATEST="${IMAGE_NAME}:latest"
+          docker tag wine-quality-rf:latest \
+            ${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf:latest
+          docker tag wine-quality-rf:latest \
+            ${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf:${{ github.run_number }}
 
-          echo "Building Docker image: $IMAGE_TAG"
-          mlflow models build-docker \
-            -m "MLProject/model_output" \
-            -n "$IMAGE_NAME" \
-            --enable-mlserver
-
-          # Tag sebagai latest juga
-          docker tag "$IMAGE_NAME:latest" "$IMAGE_TAG"
-
-          echo "IMAGE_NAME=$IMAGE_NAME"       >> $GITHUB_ENV
-          echo "IMAGE_TAG=$IMAGE_TAG"         >> $GITHUB_ENV
-          echo "IMAGE_LATEST=$IMAGE_LATEST"   >> $GITHUB_ENV
-
-      # 11. Push Docker Image ke Docker Hub
-      - name: Push Docker Image to Docker Hub
+      # 12. Push Docker Image
+      - name: Push Docker Image
         run: |
-          docker push ${{ env.IMAGE_TAG }}
-          docker push ${{ env.IMAGE_NAME }}:latest
-          echo "Image pushed: ${{ env.IMAGE_TAG }}"
-
-      # 12. Simpan link Docker Hub ke file (untuk submission)
-      - name: Save Docker Hub Link
-        run: |
-          echo "Docker Hub Image: https://hub.docker.com/r/${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf" \
-            > docker_link.txt
-          echo "Tags: latest, ${{ github.run_number }}" >> docker_link.txt
-          cat docker_link.txt
-
-      - name: Upload Docker Link as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-hub-link
-          path: docker_link.txt
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf:${{ github.run_number }}
+          echo "Pushed: https://hub.docker.com/r/${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf"
