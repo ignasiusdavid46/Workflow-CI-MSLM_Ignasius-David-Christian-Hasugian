@@ -11,6 +11,8 @@ jobs:
   train-and-deploy:
     name: Train, Upload & Docker
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Run actions/checkout@v3
@@ -64,6 +66,7 @@ jobs:
           git add model_artifacts/
           git diff --staged --quiet || \
             git commit -m "ci: update model artifacts – run ${{ github.run_number }} [skip ci]"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push
 
       - name: Build Docker Model
