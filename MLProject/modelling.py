@@ -137,11 +137,8 @@ for k, v in metrics.items():
     print(f"  {k:22s}: {v:.4f}")
 
 # MLflow Manual Logging
-with mlflow.start_run(
-    run_name="RF-CI-Advanced",
-    nested=True
-) as run:
-    run_id = run.info.run_id
+    run = mlflow.active_run()
+    run_id = run.info.run_id if run else "manual-run"
 
     # Params
     mlflow.log_params(best_params)
