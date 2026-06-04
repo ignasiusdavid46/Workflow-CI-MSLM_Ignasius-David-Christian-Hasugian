@@ -159,7 +159,6 @@ with mlflow.start_run(run_name="RF-CI-Advanced") as run:
         "trigger":   "github-actions-ci",
     })
 
-# Simpan run_id ke file agar bisa dipakai step berikutnya di CI
 with open("mlflow_run_id.txt", "w") as f:
     f.write(run_id)
 
