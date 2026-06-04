@@ -143,9 +143,7 @@ for k, v in metrics.items():
 # MLflow Manual Logging
 existing_run_id = os.getenv("MLFLOW_RUN_ID")
 
-with mlflow.start_run(run_id=existing_run_id, run_name="RF-CI-Advanced") as run:
-    run_id = run.info.run_id
-    print(f"\nMLflow Run ID: {run_id}")
+with mlflow.start_run(run_name="RF-CI-Advanced") as run:
 
     # Params
     mlflow.log_params(best_params)
