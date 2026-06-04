@@ -53,7 +53,11 @@ FEATURES = X_train.columns.tolist()
 print(f"Train: {X_train.shape} | Test: {X_test.shape}")
 
 # DagsHub + MLflow
-dagshub.init(repo_owner=DAGSHUB_USERNAME, repo_name=DAGSHUB_REPO, mlflow=True)
+mlflow.set_tracking_uri(
+    f"https://dagshub.com/{DAGSHUB_USERNAME}/{DAGSHUB_REPO}.mlflow"
+)
+os.environ["MLFLOW_TRACKING_USERNAME"] = os.getenv("MLFLOW_TRACKING_USERNAME")
+os.environ["MLFLOW_TRACKING_PASSWORD"] = os.getenv("MLFLOW_TRACKING_PASSWORD")
 mlflow.set_experiment(EXPERIMENT)
 
 # Artefak helpers
