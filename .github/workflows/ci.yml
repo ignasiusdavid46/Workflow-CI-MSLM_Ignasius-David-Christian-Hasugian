@@ -45,28 +45,11 @@ jobs:
           mlflow run . --env-manager=local -e main
 
       - name: Get latest MLflow run_id
-        env:
-          DAGSHUB_USERNAME:         ${{ secrets.DAGSHUB_USERNAME }}
-          DAGSHUB_REPO:             ${{ secrets.DAGSHUB_REPO }}
-          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
-          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
         run: |
-          python - <<'EOF'
-          import mlflow, os
-
-          uri = f"https://dagshub.com/{os.environ['DAGSHUB_USERNAME']}/{os.environ['DAGSHUB_REPO']}.mlflow"
-          mlflow.set_tracking_uri(uri)
-
-          client = mlflow.tracking.MlflowClient()
-          exp    = client.get_experiment_by_name("WineQuality-CI")
-          runs   = client.search_runs(exp.experiment_id,
-                                      order_by=["start_time DESC"],
-                                      max_results=1)
-          run_id = runs[0].info.run_id
-          print(f"Latest run_id: {run_id}")
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"MLFLOW_LATEST_RUN_ID={run_id}\n")
-          EOF
+          # run_id sudah ditulis modelling.py ke file mlflow_run_id.txt
+          RUN_ID=$(cat MLProject/mlflow_run_id.txt)
+          echo "Latest run_id: $RUN_ID"
+          echo "MLFLOW_LATEST_RUN_ID=$RUN_ID" >> $GITHUB_ENV
 
       - name: Install Python dependencies
         run: pip install requests

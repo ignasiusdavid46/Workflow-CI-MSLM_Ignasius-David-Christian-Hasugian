@@ -1,7 +1,7 @@
 """
 modelling.py  –  MLProject entry point
-Fix: Bypass dagshub.init() OAuth flow di CI dengan set tracking URI
-dan credentials langsung via environment variables.
+Fix: Ignore MLFLOW_RUN_ID dari mlflow run (itu run di tmp lokal).
+Buat run baru langsung di DagsHub tracking URI.
 """
 
 import os
@@ -32,21 +32,16 @@ EXPERIMENT = "WineQuality-CI"
 
 DAGSHUB_USERNAME = os.getenv("DAGSHUB_USERNAME", "your_dagshub_username")
 DAGSHUB_REPO     = os.getenv("DAGSHUB_REPO", "Eksperimen_SML_Ignasius-David-Christian-Hasugian")
-MLFLOW_USERNAME  = os.getenv("MLFLOW_TRACKING_USERNAME", DAGSHUB_USERNAME)
-MLFLOW_PASSWORD  = os.getenv("MLFLOW_TRACKING_PASSWORD", "")
 
-# ─── MLflow Setup (tanpa dagshub.init agar tidak trigger OAuth) ───────────────
-# Set tracking URI langsung ke DagsHub MLflow endpoint
+# ─── MLflow: set tracking URI ke DagsHub, HAPUS MLFLOW_RUN_ID ─────────────────
+# PENTING: unset MLFLOW_RUN_ID agar mlflow tidak coba resume run lokal tmp
+os.environ.pop("MLFLOW_RUN_ID", None)
+
 TRACKING_URI = f"https://dagshub.com/{DAGSHUB_USERNAME}/{DAGSHUB_REPO}.mlflow"
 mlflow.set_tracking_uri(TRACKING_URI)
-
-# Set credentials via environment (cara paling reliable di CI)
-os.environ["MLFLOW_TRACKING_USERNAME"] = MLFLOW_USERNAME
-os.environ["MLFLOW_TRACKING_PASSWORD"] = MLFLOW_PASSWORD
-
 mlflow.set_experiment(EXPERIMENT)
-print(f"MLflow tracking URI: {TRACKING_URI}")
-print(f"Experiment: {EXPERIMENT}")
+print(f"Tracking URI : {TRACKING_URI}")
+print(f"Experiment   : {EXPERIMENT}")
 
 # ─── Load Data ────────────────────────────────────────────────────────────────
 train = pd.read_csv(TRAIN_PATH)
@@ -132,13 +127,11 @@ metrics = {
 for k, v in metrics.items():
     print(f"  {k:22s}: {v:.4f}")
 
-# ─── MLflow Manual Logging ────────────────────────────────────────────────────
-# Pakai MLFLOW_RUN_ID yang di-inject mlflow run (jika ada)
-existing_run_id = os.getenv("MLFLOW_RUN_ID")
-
-with mlflow.start_run(run_id=existing_run_id, run_name="RF-CI-Advanced") as run:
+# ─── MLflow Manual Logging ke DagsHub ────────────────────────────────────────
+# Buat run BARU di DagsHub (bukan resume run tmp dari mlflow run)
+with mlflow.start_run(run_name="RF-CI-Advanced") as run:
     run_id = run.info.run_id
-    print(f"\nMLflow Run ID: {run_id}")
+    print(f"\nMLflow Run ID (DagsHub): {run_id}")
 
     mlflow.log_params(best_params)
     mlflow.log_param("cv_folds",     5)
@@ -166,9 +159,13 @@ with mlflow.start_run(run_id=existing_run_id, run_name="RF-CI-Advanced") as run:
         "trigger":   "github-actions-ci",
     })
 
+# Simpan run_id ke file agar bisa dipakai step berikutnya di CI
+with open("mlflow_run_id.txt", "w") as f:
+    f.write(run_id)
+
 # ─── Simpan model lokal untuk Docker build ────────────────────────────────────
 MODEL_DIR = "model_output"
 os.makedirs(MODEL_DIR, exist_ok=True)
 mlflow.sklearn.save_model(best_model, MODEL_DIR)
-print(f"\nModel disimpan lokal: {MODEL_DIR}/")
+print(f"Model disimpan lokal: {MODEL_DIR}/")
 print("Training selesai!")
