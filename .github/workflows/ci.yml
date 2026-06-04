@@ -13,17 +13,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout
       - name: Run actions/checkout@v3
         uses: actions/checkout@v3
 
-      # 2. Python
       - name: Set up Python 3.12.7
         uses: actions/setup-python@v5
         with:
           python-version: '3.12.7'
 
-      # 3. Check environment
       - name: Check Env
         run: |
           python --version
@@ -31,15 +28,12 @@ jobs:
           echo "DAGSHUB_USERNAME=${{ secrets.DAGSHUB_USERNAME }}"
           echo "DAGSHUB_REPO=${{ secrets.DAGSHUB_REPO }}"
 
-      # 4. Install dependencies (untuk mlflow run)
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install pandas==2.2.2 numpy==1.26.4 scikit-learn==1.5.1 \
-                      mlflow==2.19.0 dagshub==0.3.36 \
-                      matplotlib==3.9.1 seaborn==0.13.2
+                      mlflow==2.19.0 matplotlib==3.9.1 seaborn==0.13.2
 
-      # 5. Run mlflow project
       - name: Run mlflow project
         env:
           DAGSHUB_USERNAME:          ${{ secrets.DAGSHUB_USERNAME }}
@@ -50,39 +44,33 @@ jobs:
           cd MLProject
           mlflow run . --env-manager=local -e main
 
-      # 6. Get latest MLflow run_id
       - name: Get latest MLflow run_id
         env:
-          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
-          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
           DAGSHUB_USERNAME:         ${{ secrets.DAGSHUB_USERNAME }}
           DAGSHUB_REPO:             ${{ secrets.DAGSHUB_REPO }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
         run: |
           python - <<'EOF'
-          import mlflow, dagshub, os
+          import mlflow, os
 
-          dagshub.init(
-              repo_owner=os.environ["DAGSHUB_USERNAME"],
-              repo_name=os.environ["DAGSHUB_REPO"],
-              mlflow=True
-          )
+          uri = f"https://dagshub.com/{os.environ['DAGSHUB_USERNAME']}/{os.environ['DAGSHUB_REPO']}.mlflow"
+          mlflow.set_tracking_uri(uri)
+
           client = mlflow.tracking.MlflowClient()
-          exp = client.get_experiment_by_name("WineQuality-CI")
-          runs = client.search_runs(exp.experiment_id,
-                                    order_by=["start_time DESC"],
-                                    max_results=1)
+          exp    = client.get_experiment_by_name("WineQuality-CI")
+          runs   = client.search_runs(exp.experiment_id,
+                                      order_by=["start_time DESC"],
+                                      max_results=1)
           run_id = runs[0].info.run_id
           print(f"Latest run_id: {run_id}")
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"MLFLOW_LATEST_RUN_ID={run_id}\n")
           EOF
 
-      # 7. Install Python dependencies (untuk upload script)
       - name: Install Python dependencies
-        run: |
-          pip install requests
+        run: pip install requests
 
-      # 8. Upload to GitHub (commit model_output ke repo)
       - name: Upload to GitHub
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
@@ -95,7 +83,6 @@ jobs:
             git commit -m "ci: update model artifacts – run ${{ github.run_number }} [skip ci]"
           git push
 
-      # 9. Build Docker Model
       - name: Build Docker Model
         run: |
           mlflow models build-docker \
@@ -103,14 +90,12 @@ jobs:
             -n "wine-quality-rf" \
             --enable-mlserver
 
-      # 10. Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 11. Tag Docker Image
       - name: Tag Docker Image
         run: |
           docker tag wine-quality-rf:latest \
@@ -118,7 +103,6 @@ jobs:
           docker tag wine-quality-rf:latest \
             ${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf:${{ github.run_number }}
 
-      # 12. Push Docker Image
       - name: Push Docker Image
         run: |
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf:latest

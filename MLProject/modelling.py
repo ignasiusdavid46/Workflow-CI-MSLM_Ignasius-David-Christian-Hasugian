@@ -1,9 +1,7 @@
 """
 modelling.py  –  MLProject entry point
-=======================================
-Fix: Saat dijalankan via `mlflow run`, MLflow Project otomatis inject
-MLFLOW_RUN_ID ke environment. Kita pakai run ID itu langsung
-(bukan buat run baru) agar tidak terjadi conflict "Run not found".
+Fix: Bypass dagshub.init() OAuth flow di CI dengan set tracking URI
+dan credentials langsung via environment variables.
 """
 
 import os
@@ -18,7 +16,6 @@ import seaborn as sns
 
 import mlflow
 import mlflow.sklearn
-import dagshub
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV, cross_val_score
@@ -34,13 +31,22 @@ TARGET     = "quality_label"
 EXPERIMENT = "WineQuality-CI"
 
 DAGSHUB_USERNAME = os.getenv("DAGSHUB_USERNAME", "your_dagshub_username")
-DAGSHUB_REPO     = os.getenv("DAGSHUB_REPO",
-                              "Eksperimen_SML_Ignasius-David-Christian-Hasugian")
+DAGSHUB_REPO     = os.getenv("DAGSHUB_REPO", "Eksperimen_SML_Ignasius-David-Christian-Hasugian")
+MLFLOW_USERNAME  = os.getenv("MLFLOW_TRACKING_USERNAME", DAGSHUB_USERNAME)
+MLFLOW_PASSWORD  = os.getenv("MLFLOW_TRACKING_PASSWORD", "")
 
-# ─── DagsHub init SEBELUM apapun ──────────────────────────────────────────────
-# Harus dipanggil lebih awal agar tracking URI sudah diset sebelum GridSearch
-dagshub.init(repo_owner=DAGSHUB_USERNAME, repo_name=DAGSHUB_REPO, mlflow=True)
+# ─── MLflow Setup (tanpa dagshub.init agar tidak trigger OAuth) ───────────────
+# Set tracking URI langsung ke DagsHub MLflow endpoint
+TRACKING_URI = f"https://dagshub.com/{DAGSHUB_USERNAME}/{DAGSHUB_REPO}.mlflow"
+mlflow.set_tracking_uri(TRACKING_URI)
+
+# Set credentials via environment (cara paling reliable di CI)
+os.environ["MLFLOW_TRACKING_USERNAME"] = MLFLOW_USERNAME
+os.environ["MLFLOW_TRACKING_PASSWORD"] = MLFLOW_PASSWORD
+
 mlflow.set_experiment(EXPERIMENT)
+print(f"MLflow tracking URI: {TRACKING_URI}")
+print(f"Experiment: {EXPERIMENT}")
 
 # ─── Load Data ────────────────────────────────────────────────────────────────
 train = pd.read_csv(TRAIN_PATH)
@@ -55,7 +61,6 @@ FEATURES = X_train.columns.tolist()
 print(f"Train: {X_train.shape} | Test: {X_test.shape}")
 
 # ─── Artefak helpers ──────────────────────────────────────────────────────────
-
 def plot_confusion_matrix(y_true, y_pred) -> str:
     cm = confusion_matrix(y_true, y_pred)
     fig, ax = plt.subplots(figsize=(5, 4))
@@ -128,9 +133,7 @@ for k, v in metrics.items():
     print(f"  {k:22s}: {v:.4f}")
 
 # ─── MLflow Manual Logging ────────────────────────────────────────────────────
-# Kunci fix: cek apakah MLflow Project sudah inject MLFLOW_RUN_ID.
-# Kalau ada → pakai run ID itu (jangan buat run baru).
-# Kalau tidak ada (dijalankan manual) → buat run baru seperti biasa.
+# Pakai MLFLOW_RUN_ID yang di-inject mlflow run (jika ada)
 existing_run_id = os.getenv("MLFLOW_RUN_ID")
 
 with mlflow.start_run(run_id=existing_run_id, run_name="RF-CI-Advanced") as run:
