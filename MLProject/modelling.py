@@ -41,7 +41,16 @@ DAGSHUB_REPO     = os.getenv("DAGSHUB_REPO",
                               "Eksperimen_SML_Ignasius-David-Christian-Hasugian")
 
 # DagsHub + MLflow
-dagshub.init(repo_owner=DAGSHUB_USERNAME, repo_name=DAGSHUB_REPO, mlflow=True)
+DAGSHUB_USERNAME = os.getenv("DAGSHUB_USERNAME")
+DAGSHUB_REPO = os.getenv("DAGSHUB_REPO")
+
+os.environ["MLFLOW_TRACKING_USERNAME"] = os.getenv("MLFLOW_TRACKING_USERNAME")
+os.environ["MLFLOW_TRACKING_PASSWORD"] = os.getenv("MLFLOW_TRACKING_PASSWORD")
+
+mlflow.set_tracking_uri(
+    f"https://dagshub.com/{DAGSHUB_USERNAME}/{DAGSHUB_REPO}.mlflow"
+)
+
 mlflow.set_experiment(EXPERIMENT)
 
 # Load Data
