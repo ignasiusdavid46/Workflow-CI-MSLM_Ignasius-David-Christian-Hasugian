@@ -1,0 +1,129 @@
+name: CI – Train Model & Build Docker Image
+
+# ─── Trigger ──────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'MLProject/**'
+  workflow_dispatch:   # trigger manual dari tab Actions
+
+# ─── Jobs ─────────────────────────────────────────────────────────────────────
+jobs:
+  train-and-deploy:
+    name: Train Model, Upload Artifacts & Push Docker
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Setup Python
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 3. Cache pip
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-mlproject-v1
+
+      # 4. Install dependencies
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas==2.2.2 numpy==1.26.4 scikit-learn==1.5.1 \
+                      mlflow==2.19.0 dagshub==0.3.36 \
+                      matplotlib==3.9.1 seaborn==0.13.2
+
+      # 5. Jalankan MLflow Project (training)
+      - name: Run MLflow Project – Training
+        env:
+          DAGSHUB_USERNAME:          ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_REPO:              ${{ secrets.DAGSHUB_REPO }}
+          MLFLOW_TRACKING_USERNAME:  ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD:  ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: |
+          cd MLProject
+          mlflow run . --env-manager=local -e main
+
+      # 6. Upload artefak model ke GitHub (sebagai release artifact / repo file)
+      - name: Upload Model Artifact to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine-quality-model-${{ github.run_number }}
+          path: MLProject/model_output/
+          retention-days: 30
+
+      # 7. Commit model output ke repository (agar reviewer bisa lihat)
+      - name: Commit Model Output to Repo
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name  "github-actions[bot]"
+          mkdir -p model_artifacts
+          cp -r MLProject/model_output/* model_artifacts/ 2>/dev/null || true
+          git add model_artifacts/
+          git diff --staged --quiet || \
+            git commit -m "ci: update model artifacts [run #${{ github.run_number }}] [skip ci]"
+
+      - name: Push Model Artifacts
+        uses: ad-m/github-push-action@v0.8.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref_name }}
+
+      # 8. Setup Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 9. Login ke Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 10. Build Docker Image via mlflow build-docker
+      - name: Build Docker Image (mlflow build-docker)
+        run: |
+          IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf"
+          IMAGE_TAG="${IMAGE_NAME}:${{ github.run_number }}"
+          IMAGE_LATEST="${IMAGE_NAME}:latest"
+
+          echo "Building Docker image: $IMAGE_TAG"
+          mlflow models build-docker \
+            -m "MLProject/model_output" \
+            -n "$IMAGE_NAME" \
+            --enable-mlserver
+
+          # Tag sebagai latest juga
+          docker tag "$IMAGE_NAME:latest" "$IMAGE_TAG"
+
+          echo "IMAGE_NAME=$IMAGE_NAME"       >> $GITHUB_ENV
+          echo "IMAGE_TAG=$IMAGE_TAG"         >> $GITHUB_ENV
+          echo "IMAGE_LATEST=$IMAGE_LATEST"   >> $GITHUB_ENV
+
+      # 11. Push Docker Image ke Docker Hub
+      - name: Push Docker Image to Docker Hub
+        run: |
+          docker push ${{ env.IMAGE_TAG }}
+          docker push ${{ env.IMAGE_NAME }}:latest
+          echo "Image pushed: ${{ env.IMAGE_TAG }}"
+
+      # 12. Simpan link Docker Hub ke file (untuk submission)
+      - name: Save Docker Hub Link
+        run: |
+          echo "Docker Hub Image: https://hub.docker.com/r/${{ secrets.DOCKERHUB_USERNAME }}/wine-quality-rf" \
+            > docker_link.txt
+          echo "Tags: latest, ${{ github.run_number }}" >> docker_link.txt
+          cat docker_link.txt
+
+      - name: Upload Docker Link as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-hub-link
+          path: docker_link.txt
